@@ -3,39 +3,30 @@ pipeline {
 
     environment {
         PROJECT_NAME = "pipeline-test"
-        SONARQUBE_URL = "http://sonarqube:9000"
-        SONARQUBE_TOKEN = "sqa_8b3bc3d9dadd0e6b3221285d9e3481748a799219"
-        TARGET_URL = "http://172.23.41.49:5000"
+        SONARQUBE_URL = "http://localhost:9000"
+        SONARQUBE_TOKEN = credentials('sonarQubeToken') 
+        TARGET_URL = "http://172.22.165.65:5000" 
     }
 
     stages {
-        stage('Install Python') {
+        stage('Setup Python on Windows') {
             steps {
-                sh '''
-                    apt update
-                    apt install -y python3 python3-venv python3-pip
-                '''
+                bat """
+                    python --version
+                    py -3 -m venv venv
+                    venv\\Scripts\\pip install --upgrade pip
+                    venv\\Scripts\\pip install -r requirements.txt
+                """
             }
         }
         
-        stage('Setup Environment') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
-                    pip install --upgrade pip
-                    pip install -r requirements.txt
-                '''
-            }
-        }
         stage('Python Security Audit') {
             steps {
-                sh '''
-                    . venv/bin/activate
-                    pip install pip-audit
-                    mkdir -p dependency-check-report
-                    pip-audit -r requirements.txt -f markdown -o dependency-check-report/pip-audit.md || true
-                '''
+                bat """
+                    venv\\Scripts\\pip install pip-audit
+                    if not exist dependency-check-report mkdir dependency-check-report
+                    venv\\Scripts\\pip-audit -r requirements.txt -f markdown -o dependency-check-report\\pip-audit.md || exit /b 0
+                """
             }
         }
         
@@ -44,23 +35,29 @@ pipeline {
                 script {
                     def scannerHome = tool 'SonarQubeScanner'
                     withSonarQubeEnv('SonarQubeScanner') {
-                        sh """
-                            ${scannerHome}/bin/sonar-scanner \
-                                -Dsonar.projectKey=$PROJECT_NAME \
-                                -Dsonar.sources=. \
-                                -Dsonar.host.url=$SONARQUBE_URL \
-                                -Dsonar.login=$SONARQUBE_TOKEN
+                        bat """
+                            "${scannerHome}\\bin\\sonar-scanner.bat" ^
+                                -Dsonar.projectKey=%PROJECT_NAME% ^
+                                -Dsonar.sources=. ^
+                                -Dsonar.host.url=%SONARQUBE_URL% ^
+                                -Dsonar.login=%SONARQUBE_TOKEN%
                         """
                     }
                 }
             }
         }
+
         stage('Dependency Check') {
-            environment {
-                NVD_API_KEY = credentials('nvdApiKey')
-            }
             steps {
-                dependencyCheck additionalArguments: "--scan . --format HTML --out dependency-check-report --enableExperimental --enableRetired --nvdApiKey ${NVD_API_KEY}", odcInstallation: 'DependencyCheck'
+                // Usa la credencial nvdApiKey configurada en Jenkins
+                withCredentials([string(credentialsId: 'nvdApiKey', variable: 'NVD_API_KEY')]) {
+                    
+                    dependencyCheck 
+                        // Sintaxis limpia y argumento corregido: --disableAssemblyAnalyzer
+                        additionalArguments: "--scan . --format HTML --out dependency-check-report --disableAssemblyAnalyzer --enableExperimental --enableRetired --nvdApiDelay 3500", 
+                        odcInstallation: 'DependencyCheck',
+                        nvdApiKey: env.NVD_API_KEY 
+                }
             }
         }
 
@@ -77,5 +74,4 @@ pipeline {
             }
         }
     }
-
 }
